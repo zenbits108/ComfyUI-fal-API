@@ -338,17 +338,178 @@ class PassthroughVideoURL:
 
 
 # ---------------------------------------------------------------------------
+# LTX23CostEstimator
+# ---------------------------------------------------------------------------
+#
+# Pricing sourced from fal.ai model pages (April 2026):
+#
+#   Standard T2V   1080p $0.08/s  1440p $0.16/s  2160p $0.32/s
+#   Standard I2V   1080p $0.06/s  1440p $0.12/s  2160p $0.24/s
+#   Fast T2V       1080p $0.04/s  1440p $0.08/s  2160p $0.16/s
+#   Fast I2V       1080p $0.04/s  1440p $0.08/s  2160p $0.16/s
+#   Audio-to-Video $0.10/s  (flat, resolution-independent)
+#   Extend Video   $0.10/s  (flat, duration = extension length)
+#   Retake Video   $0.10/s  (flat, duration = retake segment length)
+#
+# ---------------------------------------------------------------------------
+
+_LTX23_RATES = {
+    # (node_type, resolution) -> price per second of OUTPUT video
+    ("t2v_standard",   "1080p"): 0.08,
+    ("t2v_standard",   "1440p"): 0.16,
+    ("t2v_standard",   "2160p"): 0.32,
+    ("t2v_fast",       "1080p"): 0.04,
+    ("t2v_fast",       "1440p"): 0.08,
+    ("t2v_fast",       "2160p"): 0.16,
+    ("i2v_standard",   "1080p"): 0.06,
+    ("i2v_standard",   "1440p"): 0.12,
+    ("i2v_standard",   "2160p"): 0.24,
+    ("i2v_fast",       "1080p"): 0.04,
+    ("i2v_fast",       "1440p"): 0.08,
+    ("i2v_fast",       "2160p"): 0.16,
+    # Flat-rate endpoints — resolution key ignored, use "flat"
+    ("audio_to_video", "flat"):  0.10,
+    ("extend_video",   "flat"):  0.10,
+    ("retake_video",   "flat"):  0.10,
+}
+
+_FLAT_RATE_NODES = {"audio_to_video", "extend_video", "retake_video"}
+
+_NODE_LABELS = {
+    "t2v_standard":  "Text-to-Video (standard)",
+    "t2v_fast":      "Text-to-Video (fast)",
+    "i2v_standard":  "Image-to-Video (standard)",
+    "i2v_fast":      "Image-to-Video (fast)",
+    "audio_to_video":"Audio-to-Video",
+    "extend_video":  "Extend Video",
+    "retake_video":  "Retake Video",
+}
+
+
+class LTX23CostEstimator:
+    """Estimate fal.ai cost for an LTX 2.3 generation before running it.
+
+    Wire this alongside your generation node to preview cost without
+    triggering a render. Also useful for batch planning — set
+    num_renders > 1 to see the total for a full shot sequence.
+
+    Outputs
+    -------
+    cost_summary  : formatted multi-line breakdown string
+    cost_usd      : raw float cost in USD (for math / display nodes)
+    rate_per_sec  : price per second for this config (float)
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "node_type": (
+                    [
+                        "t2v_standard",
+                        "t2v_fast",
+                        "i2v_standard",
+                        "i2v_fast",
+                        "audio_to_video",
+                        "extend_video",
+                        "retake_video",
+                    ],
+                    {"default": "i2v_standard"},
+                ),
+                "duration_seconds": (
+                    "FLOAT",
+                    {
+                        "default": 6.0,
+                        "min": 1.0,
+                        "max": 20.0,
+                        "step": 1.0,
+                        "tooltip": (
+                            "Duration of the OUTPUT video in seconds. "
+                            "For Retake/Extend, use the segment duration, not the full clip."
+                        ),
+                    },
+                ),
+                "resolution": (
+                    ["1080p", "1440p", "2160p"],
+                    {
+                        "default": "1080p",
+                        "tooltip": "Ignored for Audio-to-Video, Extend, and Retake (flat rate).",
+                    },
+                ),
+                "num_renders": (
+                    "INT",
+                    {
+                        "default": 1,
+                        "min": 1,
+                        "max": 500,
+                        "tooltip": "Multiply cost for a full batch or episode shot count.",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "FLOAT", "FLOAT")
+    RETURN_NAMES = ("cost_summary", "cost_usd", "rate_per_sec")
+    FUNCTION = "estimate"
+    CATEGORY = "FAL/Utility"
+
+    def estimate(self, node_type, duration_seconds, resolution, num_renders):
+        is_flat = node_type in _FLAT_RATE_NODES
+        rate_key = (node_type, "flat") if is_flat else (node_type, resolution)
+        rate = _LTX23_RATES.get(rate_key, 0.0)
+
+        cost_single = rate * duration_seconds
+        cost_total  = cost_single * num_renders
+
+        label = _NODE_LABELS.get(node_type, node_type)
+        res_display = "flat rate" if is_flat else resolution
+
+        lines = [
+            "─" * 38,
+            f"  LTX 2.3 Cost Estimate",
+            "─" * 38,
+            f"  Node        : {label}",
+            f"  Resolution  : {res_display}",
+            f"  Duration    : {duration_seconds:.1f}s",
+            f"  Rate        : ${rate:.4f} / second",
+            "─" * 38,
+            f"  Per render  : ${cost_single:.4f}",
+        ]
+
+        if num_renders > 1:
+            lines.append(f"  Renders     : x{num_renders}")
+            lines.append(f"  TOTAL       : ${cost_total:.4f}")
+        else:
+            lines.append(f"  TOTAL       : ${cost_total:.4f}")
+
+        lines.append("─" * 38)
+
+        # Context: how many renders per dollar
+        if cost_single > 0:
+            per_dollar = 1.0 / cost_single
+            lines.append(f"  (~{per_dollar:.1f} renders per $1.00)")
+            lines.append("─" * 38)
+
+        summary = "\n".join(lines)
+        print(f"\n{summary}\n")
+
+        return (summary, round(cost_total, 6), rate)
+
+
+# ---------------------------------------------------------------------------
 # Node registrations
 # ---------------------------------------------------------------------------
 
 NODE_CLASS_MAPPINGS = {
-    "SaveVideoFromURL_fal": SaveVideoFromURL,
-    "VideoURLPreview_fal": VideoURLPreview,
+    "SaveVideoFromURL_fal":    SaveVideoFromURL,
+    "VideoURLPreview_fal":     VideoURLPreview,
     "PassthroughVideoURL_fal": PassthroughVideoURL,
+    "LTX23CostEstimator_fal":  LTX23CostEstimator,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SaveVideoFromURL_fal": "Save Video from URL (fal)",
-    "VideoURLPreview_fal": "Preview Video from URL (fal)",
+    "SaveVideoFromURL_fal":    "Save Video from URL (fal)",
+    "VideoURLPreview_fal":     "Preview Video from URL (fal)",
     "PassthroughVideoURL_fal": "Passthrough Video URL (fal)",
+    "LTX23CostEstimator_fal":  "LTX 2.3 Cost Estimator (fal)",
 }
