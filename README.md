@@ -1,6 +1,6 @@
 # ComfyUI-fal-API
 
-Custom nodes for using Flux models with  fal API in ComfyUI with only one API Key for all.
+Custom nodes for using Flux models with fal API in ComfyUI with only one API Key for all.
 
 ## Table of Contents
 
@@ -10,8 +10,11 @@ Custom nodes for using Flux models with  fal API in ComfyUI with only one API Ke
 - [Available Nodes](#available-nodes)
   - [Image Generation](#image-generation)
   - [Video Generation](#video-generation)
+  - [LTX 2.3 Video Generation](#ltx-23-video-generation)
   - [Language Models (LLMs)](#language-models-llms)
   - [Vision Language Models (VLMs)](#vision-language-models-vlms)
+  - [Training](#training)
+  - [Utility](#utility)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -143,29 +146,108 @@ After installation and configuration, restart ComfyUI. The new nodes will be ava
   - Wan Pro runs with safety checker enabled and automatic seed selection
 - **Load Video from URL**: Load and process videos from a given URL
 
+### LTX 2.3 Video Generation
+
+Open-source 4K video generation by Lightricks. Pay-per-second, no minimums. All nodes are found under the `FAL/LTX23` category.
+
+#### Pricing (fal.ai, April 2026)
+
+| Endpoint | 1080p | 1440p | 2160p |
+|---|---|---|---|
+| Text-to-Video (standard) | $0.08/s | $0.16/s | $0.32/s |
+| Image-to-Video (standard) | $0.06/s | $0.12/s | $0.24/s |
+| Text-to-Video (fast) | $0.04/s | $0.08/s | $0.16/s |
+| Image-to-Video (fast) | $0.04/s | $0.08/s | $0.16/s |
+| Audio-to-Video | $0.10/s | flat rate | — |
+| Extend Video | $0.10/s | flat rate | — |
+| Retake Video | $0.10/s | flat rate | — |
+
+#### Nodes
+
+- **LTX 2.3 Text-to-Video (fal)**: Generate video from a text prompt. Supports 6/8/10s duration, 1080p–2160p resolution, 16:9 or 9:16 aspect ratio, 24/25/48/50 FPS, and native audio generation.
+
+- **LTX 2.3 Text-to-Video Fast (fal)**: Speed-optimised text-to-video. Supports up to 20s duration. Durations over 10s require 25 FPS + 1080p.
+
+- **LTX 2.3 Image-to-Video (fal)**: Animate a start frame image. Connect an optional `end_frame` to generate a transition between two frames (first-last-frame conditioning).
+
+- **LTX 2.3 Image-to-Video Fast (fal)**: Speed-optimised image-to-video with the same start/end frame support. Supports up to 20s duration.
+
+- **LTX 2.3 Extend Video (fal)**: Extend an existing video clip at the start or end. Takes a `video_url` string from any generation node. Control extension duration (up to 20s), mode (`start`/`end`), and context window.
+
+- **LTX 2.3 Audio-to-Video (fal)**: Drive video generation from an audio file URL (2–20s). Optionally anchor the first frame with a start image. Useful for music-synced or dialogue-driven shots.
+
+- **LTX 2.3 Retake Video (fal)**: Re-generate a specific time segment of an existing video without re-rendering the whole clip. Set `start_time`, `duration`, and `retake_mode` (`replace_video`, `replace_audio`, or `replace_audio_and_video`).
+
+#### Typical Workflow
+
+```
+[Load Image] ──► [LTX 2.3 Image-to-Video (fal)]
+                          │ video_url
+                          ▼
+               [LTX 2.3 Extend Video (fal)]
+                          │ video_url
+                          ▼
+               [Preview Video from URL (fal)]
+                          │ video_url
+                          ▼
+               [Save Video from URL (fal)]
+```
+
+---
 
 ### Language Models (LLMs)
 
-- **LLM (fal)**: Large Language Model for text generation and processing VIA openrouter endpoint
+- **LLM (fal)**: Large Language Model for text generation and processing via OpenRouter endpoint
   - Available models:
     - google/gemini-2.5-flash
     - anthropic/claude-sonnet-4.5
     - openai/gpt-4.1
     - openai/gpt-oss-120b
     - meta-llama/llama-4-maverick
-    - custom (Get model name from openrouter)'
-      
+    - Custom (get model name from OpenRouter)
+
 ### Vision Language Models (VLMs)
 
-- **VLM (fal)**: Vision Language Model for image understanding and text generation VIA openrouter endpoint
+- **VLM (fal)**: Vision Language Model for image understanding and text generation via OpenRouter endpoint
   - Available models:
     - google/gemini-2.5-flash
     - anthropic/claude-sonnet-4.5
     - openai/gpt-4o
     - qwen/qwen3-vl-235b-a22b-instruct
     - x-ai/grok-4-fast
-    - custom (Get model name from openrouter)
-  - Supports various tasks such as image captioning, visual question answering, and more
+    - Custom (get model name from OpenRouter)
+  - Supports image captioning, visual question answering, and more
+
+### Training
+
+- **Flux LoRA Trainer (fal)**: Train a custom LoRA on Flux using your own images
+- **Hunyuan Video LoRA Trainer (fal)**: Train a LoRA for Hunyuan Video generation
+- **WAN LoRA Trainer (fal)**: Train a LoRA for WAN video generation
+- **LTX Video LoRA Trainer (fal)**: Train a LoRA for LTX Video generation with scene splitting and validation options
+
+### Utility
+
+Utility nodes are found under the `FAL/Utility` category and work with **any** node that outputs a `video_url` STRING — not just LTX 2.3.
+
+- **Save Video from URL (fal)**: Download a video from a URL and save it to ComfyUI's output directory.
+  - Auto-increments filenames (`prefix_00001.mp4`, `prefix_00002.mp4`, ...)
+  - Optional subfolder for organisation (e.g. `aphelion/s1/e03`)
+  - Format auto-detection from URL, or force `mp4`/`webm`/`mov`/`gif`
+  - Optional sidecar `.txt` file embedding the generation prompt and source URL
+  - Outputs `saved_path`, `filename`, and passes `video_url` through for chaining
+  - `overwrite` mode for fast iteration loops
+
+- **Preview Video from URL (fal)**: Download a video and display a thumbnail preview inside the ComfyUI node panel.
+  - Extracts the first frame as a PNG for native ComfyUI image preview
+  - Full video saved to `output/fal_previews/` for local playback
+  - Install [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) for full inline video playback with audio
+
+- **Passthrough Video URL (fal)**: Route a `video_url` string through a labelled node for workflow clarity. No processing — purely organisational.
+
+- **LTX 2.3 Cost Estimator (fal)**: Estimate fal.ai rendering cost before committing to a generation.
+  - Covers all 7 LTX 2.3 endpoints with verified pricing
+  - `num_renders` multiplier for batch/episode cost planning
+  - Outputs formatted cost summary string, raw USD float, and rate per second
 
 ## Troubleshooting
 
@@ -182,6 +264,8 @@ If you encounter any errors during installation or usage, try the following:
    ```
    ComfyUI_windows_portable>.\python_embeded\python.exe -m pip install fal-client
    ```
+4. **FAL_KEY not found**: Ensure your `config.ini` uses `[API]` as the section header and `FAL_KEY` as the key name. Environment variable `FAL_KEY` takes priority if set.
+5. **Video preview not playing**: Install [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) via ComfyUI Manager for full inline video playback.
 
 ## License
 
