@@ -4,6 +4,8 @@ import time
 import json
 from pathlib import Path
 
+import cv2
+import numpy as np
 import requests
 import folder_paths
 
@@ -147,6 +149,11 @@ class SaveVideoFromURL:
 
             video_url = video_url.strip()
 
+
+            if not video_url.startswith(("http://", "https://")):
+                print(f"[SaveVideoFromURL] Skipping — not a valid URL: {video_url}")
+                return ("", "", video_url)
+
             # ----------------------------------------------------------------
             # Resolve output directory
             # ----------------------------------------------------------------
@@ -254,21 +261,29 @@ class VideoURLPreview:
     def preview_video(self, video_url, timeout):
         try:
             if not video_url or video_url.strip() == "":
-                return {"ui": {"videos": []}, "result": ("", video_url)}
+                return {"ui": {"images": []}, "result": ("", video_url)}
 
             video_url = video_url.strip()
+
+            if not video_url.startswith(("http://", "https://")):
+                print(f"[VideoURLPreview] Skipping — not a valid URL: {video_url}")
+                return {"ui": {"images": []}, "result": ("", video_url)}
+
             output_dir = _get_output_dir()
             preview_dir = os.path.join(output_dir, "fal_previews")
             os.makedirs(preview_dir, exist_ok=True)
 
+            # ----------------------------------------------------------------
+            # Download video
+            # ----------------------------------------------------------------
             url_path = video_url.split("?")[0].rstrip("/")
             ext = Path(url_path).suffix.lstrip(".").lower()
             if ext not in ("mp4", "webm", "mov", "gif"):
                 ext = "mp4"
 
             timestamp = int(time.time())
-            filename = f"preview_{timestamp}.{ext}"
-            saved_path = os.path.join(preview_dir, filename)
+            video_filename = f"preview_{timestamp}.{ext}"
+            video_path = os.path.join(preview_dir, video_filename)
 
             headers = {"User-Agent": "ComfyUI-fal-API/1.0"}
             response = requests.get(
@@ -276,30 +291,45 @@ class VideoURLPreview:
             )
             response.raise_for_status()
 
-            with open(saved_path, "wb") as f:
+            with open(video_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 256):
                     if chunk:
                         f.write(chunk)
 
-            print(f"[VideoURLPreview] Preview saved → {saved_path}")
+            print(f"[VideoURLPreview] Video saved → {video_path}")
 
-            # ComfyUI preview registration — subfolder relative to output/
+            # ----------------------------------------------------------------
+            # Extract first frame as PNG for native ComfyUI image preview
+            # ----------------------------------------------------------------
+            thumb_filename = f"preview_{timestamp}_thumb.png"
+            thumb_path = os.path.join(preview_dir, thumb_filename)
+
+            cap = cv2.VideoCapture(video_path)
+            success, frame = cap.read()
+            cap.release()
+
+            if success:
+                cv2.imwrite(thumb_path, frame)
+                print(f"[VideoURLPreview] Thumbnail → {thumb_path}")
+                preview_images = [
+                    {
+                        "filename": thumb_filename,
+                        "subfolder": "fal_previews",
+                        "type": "output",
+                    }
+                ]
+            else:
+                print("[VideoURLPreview] Could not extract first frame — no thumbnail.")
+                preview_images = []
+
             return {
-                "ui": {
-                    "videos": [
-                        {
-                            "filename": filename,
-                            "subfolder": "fal_previews",
-                            "type": "output",
-                        }
-                    ]
-                },
-                "result": (saved_path, video_url),
+                "ui": {"images": preview_images},
+                "result": (video_path, video_url),
             }
 
         except Exception as e:
             print(f"[VideoURLPreview] Error: {e}")
-            return {"ui": {"videos": []}, "result": ("", video_url)}
+            return {"ui": {"images": []}, "result": ("", video_url)}
 
 
 # ---------------------------------------------------------------------------
